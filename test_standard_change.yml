@@ -1,0 +1,113 @@
+---
+- hosts: localhost
+  gather_facts: false
+  vars:
+    # This must be the change template version name
+    change_template_name: "Reboot Windows Server - 1"
+  tasks:
+    - name: create change request
+      servicenow.itsm.change_request:
+        state: new
+        template: "{{ change_template_name }}"
+        # Type must be set to standard
+        type: standard
+        # Overriding short description from template to add more details
+        short_description: "Reboot Windows Server -- Ansible Run"
+        assignment_group: "CAB Approval"
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+      register: new_change
+
+    - name: debug new change
+      debug:
+        msg: "{{ new_change }}"
+
+    - name: wait for change to be scheduled
+      servicenow.itsm.change_request_info:
+        number: "{{ new_change.record.number }}"
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+      register: query_change
+      until: query_change.records.0.state == "scheduled"
+      retries: 2400
+      delay: 30
+
+    - name: move to implement
+      servicenow.itsm.change_request:
+        number: "{{ new_change.record.number }}"
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+        state: implement
+
+    - name: get implementation task
+      servicenow.itsm.change_request_task_info:
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+        query:
+          - change_request: "= {{ new_change.record.sys_id }}"
+            short_description: "= Implement"
+      register: implement_task
+      until: "implement_task.records | length == 1"
+
+    - name: get testing task
+      servicenow.itsm.change_request_task_info:
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+        query:
+          - change_request: "= {{ new_change.record.sys_id }}"
+            short_description: "= Post implementation testing"
+      register: review_task
+      until: "review_task.records | length == 1"
+
+    - name: document implementation
+      servicenow.itsm.change_request_task:
+        number: "{{ implement_task.records.0.number }}"
+        state: closed
+        close_code: "successful"
+        close_notes: "Implemented by ansible"
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+
+    - name: document review
+      servicenow.itsm.change_request_task:
+        number: "{{ review_task.records.0.number }}"
+        state: closed
+        close_code: "successful"
+        close_notes: "Implemented by ansible"
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+
+
+    - name: move to review
+      servicenow.itsm.change_request:
+        number: "{{ new_change.record.number }}"
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+        state: review
+
+    - name: mode to closed
+      servicenow.itsm.change_request:
+        number: "{{ new_change.record.number }}"
+        instance:
+          host: "{{ snow_instance }}"
+          username: "{{ snow_user }}"
+          password: "{{ snow_password }}"
+        close_code: "successful"
+        close_notes: "Change completed by ansible at {{ '%Y-%m-%d %H:%M:%S'|strftime }}"
+        state: closed
